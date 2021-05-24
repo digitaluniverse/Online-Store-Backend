@@ -184,6 +184,8 @@ class CustomRegisterTokenView(TokenView):
                 request._request.POST[key] = value 
             url, headers, body, status = self.create_token_response(
                 request._request)
+
+
             if status == 200:
                 body = json.loads(body)
                 access_token = body.get("access_token")
@@ -203,7 +205,6 @@ class CustomRegisterTokenView(TokenView):
             return response
         else:
             return Response("Email Already Exists")
-
 
 
 
