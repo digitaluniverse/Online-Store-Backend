@@ -164,27 +164,38 @@ def registerUser(request):
 
 
 class CustomRegisterTokenView(TokenView):
+    def create_user(self,data):
+        user = models.User.objects.create(
+            first_name=data['name'],
+            username=data['email'],
+            email=data['email'],
+            password=make_password(data['password'])
+        )
+
     def post(self, request, *args, **kwargs):
+
         # Use the rest framework `.data` to fake the post body of the django request.
         mutable_data = request.data.copy()
         request._request.POST = request._request.POST.copy()
         data = mutable_data
         email = data['email']
-        print(email)
-        user = models.User.objects.filter(username=email)
-        print(user)
-        # user = models.User.objects.create(
-        #     first_name=data['name'],
-        #     username=data['email'],
-        #     email=data['email'],
-        #     password=make_password(data['password'])
-        # )                                 
-        if len(user)>0:
+
+        queryset = models.User.objects.all()
+        try:
+            filtered = queryset.get(username=email)
+            print("User already exists")
+            return Response("User Already Exists")
+
+        except:
+            print("User does not exist attempting to create user")
+            self.create_user(data)
+            mutable_data['username'] = email
             for key, value in mutable_data.items():
-                request._request.POST[key] = value 
+                print(key,value)
+
+                request._request.POST[key] = value
             url, headers, body, status = self.create_token_response(
                 request._request)
-
 
             if status == 200:
                 body = json.loads(body)
@@ -203,9 +214,6 @@ class CustomRegisterTokenView(TokenView):
             for k, v in headers.items():
                 response[k] = v
             return response
-        else:
-            return Response("Email Already Exists")
-
 
 
 # drf_social_oauth2
