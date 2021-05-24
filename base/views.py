@@ -1,10 +1,12 @@
+from django.core.exceptions import ValidationError
 from django.shortcuts import render
 from django.db.models import query
 from django.http import JsonResponse
 from rest_framework import generics
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status, permissions
+from rest_framework import permissions
+from rest_framework import status as statuscode
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from django.contrib.auth.decorators import login_required
@@ -55,14 +57,14 @@ def getProduct(request, product_id):
     def get(self, request):
         queryset = models.Product.objects.all()
         serializer = serializers.ProductSerializer(queryset, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.data, status=statuscode.HTTP_200_OK)
 
     def post(self, request, format=None):
         serializer = serializers.ProductSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return Response(serializer.data, status=statuscode.HTTP_201_CREATED)
+        return Response(serializer.errors, status=statuscode.HTTP_400_BAD_REQUEST)
 
 # class Product(APIView):
     serializer_class = serializers.ProductSerializer
@@ -164,13 +166,22 @@ def registerUser(request):
 
 
 class CustomRegisterTokenView(TokenView):
-    def create_user(self,data):
-        user = models.User.objects.create(
-            first_name=data['name'],
-            username=data['email'],
-            email=data['email'],
-            password=make_password(data['password'])
-        )
+    def create_user(self, data):
+        serializer = serializers.RegisterSerializerWithToken(data=data)
+        try:
+            serializer.is_valid(raise_exception=True)
+            user = models.User.objects.create(
+                first_name=data['name'],
+                username=data['email'],
+                email=data['email'],
+                password=make_password(data['password'])
+            )
+            user.save()
+
+            return serializer.data
+        except ValidationError:
+                return Response(serializer.errors, status=statuscode.HTTP_400_BAD_REQUEST) 
+
 
     def post(self, request, *args, **kwargs):
 
@@ -178,21 +189,9 @@ class CustomRegisterTokenView(TokenView):
         mutable_data = request.data.copy()
         request._request.POST = request._request.POST.copy()
         data = mutable_data
-        email = data['email']
-
-        queryset = models.User.objects.all()
         try:
-            filtered = queryset.get(username=email)
-            print("User already exists")
-            return Response("User Already Exists")
-
-        except:
-            print("User does not exist attempting to create user")
-            self.create_user(data)
-            mutable_data['username'] = email
-            for key, value in mutable_data.items():
-                print(key,value)
-
+            serialized_data = self.create_user(data)
+            for key, value in serialized_data.items():
                 request._request.POST[key] = value
             url, headers, body, status = self.create_token_response(
                 request._request)
@@ -214,6 +213,9 @@ class CustomRegisterTokenView(TokenView):
             for k, v in headers.items():
                 response[k] = v
             return response
+        except Exception as error:
+            return Response(data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
+
 
 
 # drf_social_oauth2
