@@ -45,8 +45,11 @@ For visiting the admin panel, simply visit the following **URL** and login with 
 [http://localhost:8000/admin/oauth2_provider/application/add/](http://localhost:8000/admin/oauth2_provider/application/add/)
 
 **User: choose an admin user created in the previous step**
+
 **Client type: Confidential**
+
 **Authorization grant-type: Resource owner password based**
+
 **Name: choose any name**
 
 ![enter image description here](https://raw.githubusercontent.com/digitaluniverse/readme-resources/main/proshop-backend/oauthSetup.png)
