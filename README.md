@@ -53,3 +53,8 @@ For visiting the admin panel, simply visit the following **URL** and login with 
 **Name: choose any name**
 
 ![enter image description here](https://raw.githubusercontent.com/digitaluniverse/readme-resources/main/proshop-backend/oauthSetup.png)
+
+
+# Frontend Setup 
+ADD 
+
