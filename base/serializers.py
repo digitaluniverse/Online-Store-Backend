@@ -28,18 +28,6 @@ class UserSerializer(serializers.ModelSerializer):
             name = obj.email
         return name
 
-# class UserSerializerWithToken(UserSerializer):
-#     token = serializers.SerializerMethodField(read_only=True)
-
-#     class Meta:
-#         model = User
-#         fields = ['id', '_id', 'username', 'email', 'name', 'isAdmin', 'token']
-
-#     def get_token(self, obj):
-#         token = RefreshToken.for_user(obj)
-#         return str(token.access_token)
-
-
 class RegisterSerializerWithToken(serializers.ModelSerializer):
     grant_type = serializers.CharField()
     client_id = serializers.CharField()
@@ -59,7 +47,6 @@ class RegisterSerializerWithToken(serializers.ModelSerializer):
         }
     def validate(self, data):
         queryset = models.User.objects.all()
-        print("queryset: ", queryset, "\n\n\n")
         try:
             email = data.get('email')
             filtered = queryset.get(username=email)
