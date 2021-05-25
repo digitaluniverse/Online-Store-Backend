@@ -74,66 +74,6 @@ class RegisterSerializerWithToken(serializers.ModelSerializer):
         return username
 
 
-class CustomTokenSerializer(serializers.ModelSerializer):
-    # access_token = serializers.CharField()
-    # refresh_token = serializers.CharField()
-    # expires_in = serializers.CharField()
-    # token_type = serializers.CharField()
-    # scope = serializers.CharField()
-    # id = serializers.SerializerMethodField(read_only=True)
-    _id = serializers.SerializerMethodField(read_only=True)
-    name = serializers.SerializerMethodField(read_only=True)
-    isAdmin = serializers.SerializerMethodField(read_only=True)
-
-
-    class Meta:
-        model = models.User
-
-        # fields = ('access_token', 'refresh_token',
-        #           'expires_in', 'token_type', 'scope', 'id', '_id','username','email', 'name','isAdmin')
-
-        fields = ('id', '_id','username','email', 'name','isAdmin')
-        
-        # extra_kwargs = {
-        #     'access_token': {'read_only': True},
-        #     'refresh_token': {'read_only': True},
-        #     'expires_in': {'read_only': True},
-        #     'token_type': {'read_only': True},
-        #     'scope': {'read_only': True}
-        # }
-
-    def get__id(self, obj):
-        return obj.id
-
-    def get_isAdmin(self, obj):
-        return obj.is_staff
-
-    def get_name(self, obj):
-        name = obj.first_name
-        if name == '':
-            name = obj.email
-        return name
-
-    # def get_id(self, obj):
-    #     print("obj: ",obj)
-    #     return obj.id
-
-    # def get_username(self, obj):
-    #     username = obj.email
-    #     return username
-
-    # def get__id(self, obj):
-    #     return obj.id
-
-    # def get_isAdmin(self, obj):
-    #     return obj.is_staff
-
-    # def get_name(self, obj):
-    #     name = obj.first_name
-    #     if name == '':
-    #         name = obj.email
-    #     return name
-
 
 class ProductSerializer(serializers.ModelSerializer):
     class Meta:
