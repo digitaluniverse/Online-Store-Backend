@@ -127,43 +127,6 @@ def registerUser(request):
     return Response(serializer.data)
 
 
-# class UserRegister(CsrfExemptMixin, OAuthLibMixin, APIView):
-#     permission_classes = (permissions.AllowAny,)
-
-#     server_class = oauth2_settings.OAUTH2_SERVER_CLASS
-#     validator_class = oauth2_settings.OAUTH2_VALIDATOR_CLASS
-#     oauthlib_backend_class = oauth2_settings.OAUTH2_BACKEND_CLASS
-
-#     def post(self, request):
-#         if request.auth is None:
-#             data = request.data
-
-
-#             serializer = serializers.RegisterSerializer(data=data)
-#             user = models.User.objects.create(
-#                 first_name=data['name'],
-#                 username=data['email'],
-#                 email=data['email'],
-#                 password=make_password(data['password'])
-#             )
-#             if serializer.is_valid():
-#                 try:
-#                     with transaction.atomic():
-
-#                         user = serializer.save()
-
-#                         url, headers, body, token_status = self.create_token_response(
-#                             request)
-#                         if token_status != 200:
-#                             raise Exception(json.loads(body).get(
-#                                 "error_description", ""))
-
-#                         return Response(json.loads(body), status=token_status)
-#                 except Exception as e:
-#                     return Response(data={"error": e.message}, status=status.HTTP_400_BAD_REQUEST)
-#             return Response(data=serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-#         return Response(status=status.HTTP_403_FORBIDDEN)
-
 
 class CustomRegisterTokenView(TokenView):
     def create_user(self, data):
@@ -205,8 +168,9 @@ class CustomRegisterTokenView(TokenView):
                     app_authorized.send(
                         sender=self, request=request,
                         token=token)
-                    body['username'] = token.user.username
-                    body['email'] = token.user.email
+                    user_data = serializers.UserSerializer(token.user).data
+                    #add user data to token body
+                    body.update(user_data)
                     body = json.dumps(body)
             response = Response(data=json.loads(body), status=status)
 
@@ -237,8 +201,8 @@ class CustomTokenView(TokenView):
                 app_authorized.send(
                     sender=self, request=request,
                     token=token)
-                body['username'] = token.user.username
-                body['email'] = token.user.email
+                user_data = serializers.UserSerializer(token.user).data
+                body.update(user_data)
                 body = json.dumps(body)
         response = Response(data=json.loads(body), status=status)
 
