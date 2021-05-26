@@ -30,17 +30,17 @@ class User(AbstractBaseUser, PermissionsMixin):
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
     email = models.EmailField(unique=True)
-    authy_phone = PhoneNumberField(
+    number = PhoneNumberField(
         null=True,
         blank=True,
         unique=True,
         help_text="This phone number is dedicated to Twilio 2FA Authentication.",
     )
-    authy_id = models.CharField(
-        max_length=12,
-        blank=True,
-        help_text="Authentication ID received from Twilio 2FA Api.",
-    )
+    phone_verified = models.BooleanField(default=False)
+    email_verified = models.BooleanField(default=False)
+    reset_authorized = models.BooleanField(default=False)
+
+
     username = models.CharField(max_length=50, unique=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
@@ -50,8 +50,21 @@ class User(AbstractBaseUser, PermissionsMixin):
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ["first_name", "last_name", "username"]
 
+    def get_phone(self):
+        try:
+            parsed = phonenumbers.parse(str(self.number), None)
+        except phonenumbers.NumberParseException:
+            return None
+        return parsed
+
+    def is_phone_verified(self):
+        if self.get_phone() is not None and self.phone_verified:
+            return True
+        else:
+            return False
+
     class Meta:
-        ordering = ('id','username', 'first_name','last_name','email','authy_phone','is_active','is_staff', 'password')
+        ordering = ('id','username', 'first_name','last_name','email','number','phone_verified','is_active','is_staff', 'password')
         verbose_name_plural = "users"
 
     def __str__(self):

@@ -16,7 +16,22 @@ from oauth2_provider.signals import app_authorized
 from base import models
 from base import serializers
 import json
+from twilio.rest import Client
+from django.conf import settings
 
+client = Client(settings.SOCIAL_AUTH_TWILIO_KEY, settings.SOCIAL_AUTH_TWILIO_SECRET)
+
+def verifications(user_destination, via):
+        return client.verify \
+                    .services(settings.TWILIO_VERIFICATION_SID) \
+                    .verifications \
+                    .create(to=user_destination, channel=via)
+
+def verification_checks(user_destination, token):
+        return client.verify \
+                    .services(settings.TWILIO_VERIFICATION_SID) \
+                    .verification_checks \
+                    .create(to=user_destination, code=token)
 
 
 @api_view(['Get'])
@@ -82,7 +97,7 @@ class updateUserProfileView(TokenView):
 
 
 # drf_social_oauth2
-class CustomTokenView(TokenView):
+class userLoginView(TokenView):
     def post(self, request, *args, **kwargs):
         # Use the rest framework `.data` to fake the post body of the django request.
         mutable_data = request.data.copy()
@@ -110,7 +125,7 @@ class CustomTokenView(TokenView):
         return response
 
 
-class CustomRegisterTokenView(TokenView):
+class userRegisterView(TokenView):
     id = None 
     def delete_user(self):
         try:
@@ -175,16 +190,109 @@ class CustomRegisterTokenView(TokenView):
 
 
 class updateUserNumber(TokenView):
-    
     @permission_classes([IsAuthenticated])
     def put(self, request):
         user = request.user
-
         serializer = serializers.UserSerializer(user, many=False)
-
         data = request.data
-        user.authy_phone = data['number']
+        number=data['number']
+        
+        if (not user.phone_verified and user.number!=number):
+            verifications(number, 'sms')
+            user.number = number
+            user.save()
+            response = Response(data={str("Sending Verification code")}, status=statuscode.HTTP_200_OK)
+        elif not user.phone_verified:
+            verifications(number, 'sms')
+            response = Response(data={str("Sending Verification code")}, status=statuscode.HTTP_200_OK)
+        else:
+           response = Response(data={"error": str("Phone Number is already Verified")}, status=statuscode.HTTP_400_BAD_REQUEST)
+        return response
 
-        user.save()
 
-        return Response(serializer.data)
+class verifyUserNumber(TokenView):
+    @permission_classes([IsAuthenticated])
+    def get(self, request):
+        user = request.user
+        serializer = serializers.UserSerializer(user, many=False)
+        data = request.data
+        ser = serializer.data
+        number = ser['number']
+        code=data['code']
+        if (not user.phone_verified):
+            try:
+                valid = verification_checks(number, code).valid
+                print(valid)
+                user.phone_verified = valid
+                user.save()
+                response = Response(data={"verified": number}, status=statuscode.HTTP_200_OK)
+            except Exception as error:
+                print(error)
+                response = Response(data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
+            return response
+        else:
+            response = Response(data={"valid": user.phone_verified,"message": str("Phone Number is already Verified")}, status=statuscode.HTTP_200_OK)
+        return response
+
+
+
+
+class verifyUserEmail(TokenView):
+    @permission_classes([IsAuthenticated])
+    def put(self, request):
+        user = request.user
+        data = request.data
+        email=data['email']
+        
+        if (not user.phone_verified and user.email!=email):
+            verifications(email, 'email')
+            user.email= email
+            user.save()
+            response = Response(data={str("Sending Verification code")}, status=statuscode.HTTP_200_OK)
+        elif not user.email_verified:
+            verifications(email, 'email')
+            response = Response(data={str("Sending Verification code")}, status=statuscode.HTTP_200_OK)
+        else:
+           response = Response(data={"error": str("Email is already Verified")}, status=statuscode.HTTP_400_BAD_REQUEST)
+        return response
+
+class confirmUserEmail(TokenView):
+    @permission_classes([IsAuthenticated])
+    def get(self, request):
+        user = request.user
+        serializer = serializers.UserSerializer(user, many=False)
+        data = request.data
+        ser = serializer.data
+        print(ser)
+        email = ser['email']
+        code=data['code']
+        if (not user.email_verified):
+            try:
+                valid = verification_checks(email, code).valid
+                print(valid)
+                user.email_verified = valid
+                user.save()
+                response = Response(data={"verified": email}, status=statuscode.HTTP_200_OK)
+            except Exception as error:
+                print(error)
+                response = Response(data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
+            return response
+        else:
+            response = Response(data={"verified": user.email,"message": str("Email was already Verified")}, status=statuscode.HTTP_200_OK)
+        return response
+
+class resetPassword(TokenView):
+    @permission_classes([IsAuthenticated])
+    def put(self, request):
+        user = request.user
+        data = request.data
+        password=make_password(data['password'])
+
+        if (user.phone_verified):
+            number = str(user.number)
+            print(number)
+            verifications(number, 'sms')
+            response = Response(data={"message": str("Phone Number is already Verified")}, status=statuscode.HTTP_200_OK)
+        else:
+           response = Response(data={"error": str("Phone Number is not Verified")}, status=statuscode.HTTP_400_BAD_REQUEST)
+        return response
