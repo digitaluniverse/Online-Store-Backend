@@ -41,11 +41,13 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'corsheaders',
+    'accounts.apps.AccountsConfig',
     'rest_framework',
-    'base',
     'oauth2_provider',
     'social_django',
     'rest_framework_social_oauth2',
+    'base.apps.BaseConfig',
+    'clients',
 
 ]
 
@@ -65,12 +67,15 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.SessionAuthentication',
         'oauth2_provider.contrib.rest_framework.OAuth2Authentication',
         'rest_framework_social_oauth2.authentication.SocialAuthentication',
+        'drf_social_oauth2.authentication.SocialAuthentication',
+
     ),
 }
 
 AUTHENTICATION_BACKENDS = (
     'django.contrib.auth.backends.ModelBackend',
     'drf_social_oauth2.backends.DjangoOAuth2',
+    'social_core.backends.twilio.TwilioAuth',
 
 )
 
@@ -174,3 +179,8 @@ MEDIA_ROOT = 'static/images/'
 OAUTH2_PROVIDER = {
     'ACCESS_TOKEN_EXPIRE_SECONDS': 42069,
 }
+AUTH_USER_MODEL = 'accounts.User'
+
+
+SOCIAL_AUTH_TWILIO_KEY = config('TWILIO_ACCOUNT_SID')
+SOCIAL_AUTH_TWILIO_SECRET = config('TWILIO_AUTH_TOKEN')

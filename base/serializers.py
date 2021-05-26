@@ -16,7 +16,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = models.User
-        fields = ['id', '_id', 'username', 'email', 'name', 'isAdmin']
+        fields = ['id', '_id', 'username', 'email', 'name', 'authy_phone','isAdmin']
 
     def get__id(self, obj):
         return obj.id
@@ -74,8 +74,9 @@ class RegisterSerializerWithToken(serializers.ModelSerializer):
         return username
 
 
-
 class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = models.Product
         fields = '__all__'
+
+
