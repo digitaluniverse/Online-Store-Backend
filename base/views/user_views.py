@@ -1,3 +1,4 @@
+from rest_framework import permissions
 from django.core.exceptions import ValidationError
 from django.shortcuts import render
 from rest_framework.response import Response
@@ -24,7 +25,6 @@ import phonenumbers
 from phonenumber_field.serializerfields import PhoneNumberField
 from rest_framework.generics import GenericAPIView
 from oauthlib import common
-from oauth2_provider.models import get_access_token_model, get_application_model
 from django.utils import timezone
 from datetime import datetime, timedelta
 
@@ -37,19 +37,37 @@ RefreshToken = get_refresh_token_model()
 authy_api = AuthyApiClient(settings.AUTHY_API_KEY)
 
 
-client = Client(settings.SOCIAL_AUTH_TWILIO_KEY, settings.SOCIAL_AUTH_TWILIO_SECRET)
+client = Client(settings.SOCIAL_AUTH_TWILIO_KEY,
+                settings.SOCIAL_AUTH_TWILIO_SECRET)
+
+# channel_configuration = {substitutions:{ email: }}
+
 
 def verifications(user_destination, via):
-        return client.verify \
-                    .services(settings.TWILIO_VERIFICATION_SID) \
-                    .verifications \
-                    .create(to=user_destination, channel=via)
+
+
+
+
+
+    return client.verify \
+        .services(settings.TWILIO_VERIFICATION_SID) \
+        .verifications \
+        .create(
+            to=user_destination,
+            channel=via,
+            channel_configuration={
+                'substitutions': {
+                    'email': user_destination
+                }
+            }
+                )
+
 
 def verification_checks(user_destination, token):
-        return client.verify \
-                    .services(settings.TWILIO_VERIFICATION_SID) \
-                    .verification_checks \
-                    .create(to=user_destination, code=token)
+    return client.verify \
+        .services(settings.TWILIO_VERIFICATION_SID) \
+        .verification_checks \
+        .create(to=user_destination, code=token)
 
 
 @api_view(['Get'])
@@ -72,17 +90,12 @@ def getUsers(request):
 @permission_classes([IsAuthenticated])
 def updateUserProfile(request):
     user = request.user
-    authenticated = self.authenticate_client(request)
-
-    serializer = serializers.UserSerializer(user, many=False)
-
+    serializer = serializers.CustomUserSerializer(user, many=False)
     data = request.data
     user.first_name = data['name']
     user.username = data['email']
     user.email = data['email']
-
-    if data['password'] != '':
-        user.password = make_password(data['password'])
+    user.authy_phone = data['authy_phone']
 
     user.save()
 
@@ -91,27 +104,23 @@ def updateUserProfile(request):
 
 # drf_social_oauth2
 class updateUserProfileView(TokenView):
-    
+
     @permission_classes([IsAuthenticated])
     def put(self, request, *args, **kwargs):
         # Use the rest framework `.data` to fake the post body of the django request.
         user = request.user
 
-        serializer = serializers.UserSerializer(user, many=False)
+        serializer = serializers.CustomUserSerializer(user, many=False)
 
         data = request.data
         user.first_name = data['name']
         user.username = data['email']
         user.email = data['email']
-
-        if data['password'] != '':
-            user.password = make_password(data['password'])
+        user.authy_phone = data['authy_phone']
 
         user.save()
 
         return Response(serializer.data)
-
-
 
 
 # drf_social_oauth2
@@ -133,6 +142,9 @@ class userLoginView(TokenView):
                 app_authorized.send(
                     sender=self, request=request,
                     token=token)
+                if not token.user.email_verified:
+                    return Response({"error": "Email must be Verified before Login"},
+                                    status=statuscode.HTTP_400_BAD_REQUEST)
                 user_data = serializers.UserSerializer(token.user).data
                 body.update(user_data)
                 body = json.dumps(body)
@@ -143,15 +155,15 @@ class userLoginView(TokenView):
         return response
 
 
-class userRegisterView(TokenView):
-    id = None 
+class newRegisterView(APIView):
+    id = None
+
     def delete_user(self):
         try:
             user = models.User.objects.get(id=self.id)
             user.delete()
         except Exception as error:
             print("Error: ", error)
-
 
     def create_user(self, data):
         serializer = serializers.RegisterSerializerWithToken(data=data)
@@ -166,7 +178,47 @@ class userRegisterView(TokenView):
             self.id = user.id
             return serializer.data
         except ValidationError:
-                return Response(serializer.errors, status=statuscode.HTTP_400_BAD_REQUEST) 
+            return Response(serializer.errors, status=statuscode.HTTP_400_BAD_REQUEST)
+
+    def post(self, request, *args, **kwargs):
+        # Use the rest framework `.data` to fake the post body of the django request.
+        mutable_data = request.data.copy()
+        request._request.POST = request._request.POST.copy()
+        data = mutable_data
+        try:
+            serialized_data = self.create_user(data)
+
+            return Response(data={"error": "ERROR"}, status=statuscode.HTTP_400_BAD_REQUEST)
+
+        except Exception as error:
+            return Response(data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
+
+
+class userRegisterView(TokenView):
+    id = None
+
+    def delete_user(self):
+        try:
+            user = models.User.objects.get(id=self.id)
+            user.delete()
+        except Exception as error:
+            print("Error: ", error)
+
+    def create_user(self, data):
+        serializer = serializers.RegisterSerializerWithToken(data=data)
+        try:
+            serializer.is_valid(raise_exception=True)
+            user = models.User.objects.create(
+                first_name=data['name'],
+                username=data['email'],
+                email=data['email'],
+                password=make_password(data['password'])
+            )
+            self.id = user.id
+            return serializer.data
+        except ValidationError:
+            return Response(serializer.errors, status=statuscode.HTTP_400_BAD_REQUEST)
+
     def post(self, request, *args, **kwargs):
         # Use the rest framework `.data` to fake the post body of the django request.
         mutable_data = request.data.copy()
@@ -178,7 +230,7 @@ class userRegisterView(TokenView):
                 request._request.POST[key] = value
             url, headers, body, status = self.create_token_response(
                 request._request)
-            print("status: ",body)
+            print("status: ", body)
             if status == 401:
                 self.delete_user()
                 body = json.loads(body)
@@ -195,7 +247,7 @@ class userRegisterView(TokenView):
                         sender=self, request=request,
                         token=token)
                     user_data = serializers.UserSerializer(token.user).data
-                    #add user data to token body
+                    # add user data to token body
                     body.update(user_data)
                     body = json.dumps(body)
             response = Response(data=json.loads(body), status=status)
@@ -213,18 +265,21 @@ class updateUserNumber(TokenView):
         user = request.user
         serializer = serializers.UserSerializer(user, many=False)
         data = request.data
-        number=data['number']
-        
-        if (not user.phone_verified and user.number!=number):
+        number = data['number']
+
+        if (not user.phone_verified and user.number != number):
             verifications(number, 'sms')
             user.number = number
             user.save()
-            response = Response(data={str("Sending Verification code")}, status=statuscode.HTTP_200_OK)
+            response = Response(
+                data={str("Sending Verification code")}, status=statuscode.HTTP_200_OK)
         elif not user.phone_verified:
             verifications(number, 'sms')
-            response = Response(data={str("Sending Verification code")}, status=statuscode.HTTP_200_OK)
+            response = Response(
+                data={str("Sending Verification code")}, status=statuscode.HTTP_200_OK)
         else:
-           response = Response(data={"error": str("Phone Number is already Verified")}, status=statuscode.HTTP_400_BAD_REQUEST)
+            response = Response(data={"error": str(
+                "Phone Number is already Verified")}, status=statuscode.HTTP_400_BAD_REQUEST)
         return response
 
 
@@ -236,83 +291,79 @@ class verifyUserNumber(TokenView):
         data = request.data
         ser = serializer.data
         number = ser['number']
-        code=data['code']
+        code = data['code']
         if (not user.phone_verified):
             try:
                 valid = verification_checks(number, code).valid
                 print(valid)
                 user.phone_verified = valid
                 user.save()
-                response = Response(data={"verified": number}, status=statuscode.HTTP_200_OK)
+                response = Response(
+                    data={"verified": number}, status=statuscode.HTTP_200_OK)
             except Exception as error:
                 print(error)
-                response = Response(data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
+                response = Response(
+                    data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
             return response
         else:
-            response = Response(data={"valid": user.phone_verified,"message": str("Phone Number is already Verified")}, status=statuscode.HTTP_200_OK)
+            response = Response(data={"valid": user.phone_verified, "message": str(
+                "Phone Number is already Verified")}, status=statuscode.HTTP_200_OK)
         return response
-
-
 
 
 class verifyUserEmail(TokenView):
-    @permission_classes([IsAuthenticated])
     def put(self, request):
-        user = request.user
         data = request.data
-        email=data['email']
-        
-        if (not user.phone_verified and user.email!=email):
-            verifications(email, 'email')
-            user.email= email
-            user.save()
-            response = Response(data={str("Sending Verification code")}, status=statuscode.HTTP_200_OK)
-        elif not user.email_verified:
-            verifications(email, 'email')
-            response = Response(data={str("Sending Verification code")}, status=statuscode.HTTP_200_OK)
-        else:
-           response = Response(data={"error": str("Email is already Verified")}, status=statuscode.HTTP_400_BAD_REQUEST)
-        return response
+        email = data['email']
+
+        verifications(email, 'email')
+
+        return Response(
+            data={str("Sending Verification code")}, status=statuscode.HTTP_200_OK)
+
 
 class confirmUserEmail(TokenView):
-    @permission_classes([IsAuthenticated])
-    def get(self, request):
-        user = request.user
-        serializer = serializers.UserSerializer(user, many=False)
+    def post(self, request):
         data = request.data
-        ser = serializer.data
-        print(ser)
-        email = ser['email']
-        code=data['code']
-        if (not user.email_verified):
+        email = data['email']
+        code = data['code']
+        try:
+            valid = verification_checks(email, code).valid
+            print(valid)
+            if not valid:
+                # verifications(email, 'email')
+                return Response(
+                    data={"error": "Not Valid Sending Code Again"}, status=statuscode.HTTP_400_BAD_REQUEST)
             try:
-                valid = verification_checks(email, code).valid
-                print(valid)
+                user = models.User.objects.get(email=email)
                 user.email_verified = valid
                 user.save()
-                response = Response(data={"verified": email}, status=statuscode.HTTP_200_OK)
+                return Response(
+                    data={"verified": email}, status=statuscode.HTTP_200_OK)
             except Exception as error:
-                print(error)
-                response = Response(data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
-            return response
-        else:
-            response = Response(data={"verified": user.email,"message": str("Email was already Verified")}, status=statuscode.HTTP_200_OK)
-        return response
+                return Response(
+                    data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
+        except Exception as error:
+            return Response(
+                data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
+
 
 class resetPassword(TokenView):
     @permission_classes([IsAuthenticated])
     def put(self, request):
         user = request.user
         data = request.data
-        password=make_password(data['password'])
+        password = make_password(data['password'])
 
         if (user.phone_verified):
             number = str(user.number)
             print(number)
             verifications(number, 'sms')
-            response = Response(data={"message": str("Phone Number is already Verified")}, status=statuscode.HTTP_200_OK)
+            response = Response(data={"message": str(
+                "Phone Number is already Verified")}, status=statuscode.HTTP_200_OK)
         else:
-           response = Response(data={"error": str("Phone Number is not Verified")}, status=statuscode.HTTP_400_BAD_REQUEST)
+            response = Response(data={"error": str(
+                "Phone Number is not Verified")}, status=statuscode.HTTP_400_BAD_REQUEST)
         return response
 
 
@@ -369,8 +420,6 @@ class CustomTokenObtainPairView(TokenView):
         return response
 
 
-
-
 class PhoneVerificationView(GenericAPIView):
     """
     2FA JWT Authentication: Step 1
@@ -408,14 +457,22 @@ class PhoneRegistrationView(GenericAPIView):
     def post(self, request, *args, **kwargs):
         user = self.get_object()
         data = request.data
+        print(user.email)
+
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
-        phone = phonenumbers.parse(str(serializer.validated_data["authy_phone"]), None)
+        phone = phonenumbers.parse(
+            str(serializer.validated_data["authy_phone"]), None)
+        print(serializer.validated_data)
+
         authy_user = authy_api.users.create(
             user.email, str(phone.national_number), phone.country_code, True
         )
+        print(str(phone.national_number), phone.country_code)
+
         if authy_user.ok():
             user.authy_id = authy_user.id
+
             user.authy_phone = serializer.validated_data["authy_phone"]
             user.save()
             return Response(status=statuscode.HTTP_204_NO_CONTENT)
@@ -433,8 +490,6 @@ class AuthyTokenVerifyView(APIView):
     Is success: user receive refresh and access JWT.
     """
 
-    # serializer_class = UserTokenSerializer
-
     def post(self, request, *args, **kwargs):
         # ret = request.post(request, *args, **kwargs)
         user = models.User.objects.get(username=request.data["username"])
@@ -446,33 +501,14 @@ class AuthyTokenVerifyView(APIView):
                 user.authy_id, token=request.data["token"]
             )
             if verification.ok():
-                # pass user instance to receive JWT
-                application = Application.objects.get(client_id=validated_data['client_id'])
-                expires = timezone.now() + timedelta(seconds=oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
-                access_token = AccessToken(
-                    user=user,
-                    scope='',
-                    expires=expires,
-                    token=common.generate_token(),
-                    application=application
-                )
-                access_token.save()
-                refresh_token = RefreshToken(
-                    user=user,
-                    token=common.generate_token(),
-                    application=application,
-                    access_token=access_token
-                )
-                refresh_token.save()
-                user_data = serializers.UserSerializer(user).data
-                body = {"access_token": access_token.token,"refresh_token": refresh_token.token}
-                body.update(user_data)
-                body = json.dumps(body)
-                return Response(data=json.loads(body), status=statuscode.HTTP_200_OK)
+                serializer = serializers.CustomUserSerializer(user, many=False)
+
+                return Response(serializer.data, status=statuscode.HTTP_200_OK)
             else:
                 # return 2FA token verification error
                 return Response(
-                    {"error": verification.response.json()["errors"]["message"]},
+                    {"error": verification.response.json()[
+                        "errors"]["message"]},
                     status=statuscode.HTTP_400_BAD_REQUEST,
                 )
         else:
@@ -481,3 +517,78 @@ class AuthyTokenVerifyView(APIView):
                 {"error": "User not allowed for 2FA authentication."},
                 status=statuscode.HTTP_400_BAD_REQUEST,
             )
+
+
+class AuthyLogin(APIView):
+
+    """
+    2FA JWT Authentication: Step 3
+    Twilio 2FA user authentication view.
+    This view verify if Twilio 2FA registered user entered correct 8 digit token.
+    Token will be requested by TwoFaTokenObtainPairView only for 2FA registered users
+    Is success: user receive refresh and access JWT.
+    """
+
+    serializer_class = serializers.PhoneTokenSerializer
+
+    def post(self, request, *args, **kwargs):
+        data = request.data
+        phone = phonenumbers.parse(str(data.get("authy_phone")), None)
+        try:
+            user = models.User.objects.get(authy_phone=phone)
+        # check if user has 2FA id assigned
+            if user.is_twofa_on():
+                # verify received 2FA token with Twilio API
+                verification = authy_api.tokens.verify(
+                    user.authy_id, token=request.data["token"]
+                )
+                if verification.ok():
+                    serializer = serializers.CustomUserSerializer(
+                        user, many=False)
+
+                    return Response(serializer.data, status=statuscode.HTTP_200_OK)
+                else:
+                    # return 2FA token verification error
+                    return Response(
+                        {"error": verification.response.json()[
+                            "errors"]["message"]},
+                        status=statuscode.HTTP_400_BAD_REQUEST,
+                    )
+            else:
+                # user has no 2FA authentication methods enabled
+                return Response(
+                    {"error": "User not allowed for 2FA authentication."},
+                    status=statuscode.HTTP_400_BAD_REQUEST,
+                )
+        except Exception as error:
+            return Response(data={"error": str(
+                "Phone Number Not Found")}, status=statuscode.HTTP_404_NOT_FOUND)
+
+
+# @api_view(['Get'])
+# @permission_classes([IsAuthenticated])
+# def testToken(request):
+#     user = request.user
+#     data = request.data
+#     print(data)
+#     serializer = serializers.TokenSerializer(data=data)
+#     serializer.is_valid()
+#     return Response(serializer.data)
+
+class testToken(GenericAPIView):
+    """
+    TEST TOKEN GENERATION
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = serializers.TokenSerializer
+
+    def get(self, request):
+        data = request.data
+        serializer = self.get_serializer(data=data, user=self.request.user)
+        try:
+            serializer.is_valid(raise_exception=True)
+            print(serializer.validated_data)
+            return Response(data=(serializer.validated_data), status=statuscode.HTTP_200_OK)
+        except Exception as error:
+            return Response(data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
