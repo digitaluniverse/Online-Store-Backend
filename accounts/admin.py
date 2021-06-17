@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import User
+from .models import User, VerifyToken
 # Register your models here.
 # admin.site.register(models.User)
 
@@ -17,4 +17,8 @@ class UserAdmin(admin.ModelAdmin):
     list_display = ['id','username', 'last_name','first_name','email','number','phone_verified','is_active','is_staff', 'password']
 
 
+class VerifyTokenAdmin(admin.ModelAdmin):
+    list_display = ['id', 'user', 'token']
+
 admin.site.register(User,UserAdmin)
+admin.site.register(VerifyToken,VerifyTokenAdmin)

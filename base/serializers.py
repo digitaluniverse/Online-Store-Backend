@@ -1,7 +1,7 @@
 from os import access, read
 from rest_framework import serializers
 # from django.contrib.auth.models import User
-from rest_framework.fields import ReadOnlyField
+from rest_framework.fields import EmailField, ReadOnlyField
 from . import models
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.hashers import make_password
@@ -28,8 +28,8 @@ RefreshToken = get_refresh_token_model()
 
 authy_api = AuthyApiClient(settings.AUTHY_API_KEY)
 
-client = Client(settings.SOCIAL_AUTH_TWILIO_KEY,
-                settings.SOCIAL_AUTH_TWILIO_SECRET)
+client = Client(settings.TWILIO_ACCOUNT_SID,
+                settings.TWILIO_AUTH_TOKEN)
 
 
 def verifications(user_destination, via):
@@ -117,15 +117,15 @@ class RegisterSerializerWithToken(serializers.ModelSerializer):
 
 
 class ProductSerializer(serializers.ModelSerializer):
-    image = serializers.SerializerMethodField(read_only=True)
+    # image = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = models.Product
         fields = '__all__'
 
-    def get_image(self, obj):
-        image = settings.BACKEND_URL + obj.image.url
-        return image
+    # def get_image(self, obj):
+    #     image = settings.BACKEND_URL + obj.image.url
+    #     return image
 
 
 class TokenSerializer(serializers.Serializer):
@@ -149,6 +149,7 @@ class TokenSerializer(serializers.Serializer):
         # print(data)
         data['access_token'] = str(access_token)
         return data
+
 
 
 class CustomUserSerializer(serializers.ModelSerializer):
@@ -207,6 +208,18 @@ class CustomUserSerializer(serializers.ModelSerializer):
         refresh_token = str(refresh_token)
         return refresh_token
 
+
+class UpdateUserSerializer(CustomUserSerializer):
+    # id = ReadOnlyField()
+    # name = CharField()
+    email = EmailField()
+    # authy_phone = PhoneNumberField(required=False)
+
+    def validate_email(self,value):
+        print("VALIDATE EMAIL")
+        
+        print(value)
+        return value
 
 class PhoneSerializer(serializers.Serializer):  # noqa
     authy_phone = PhoneNumberField(required=True)

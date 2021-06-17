@@ -2,6 +2,8 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser
 from django.contrib.auth.models import BaseUserManager
 from django.contrib.auth.models import PermissionsMixin
+import secrets
+import uuid
 
 from phonenumber_field.modelfields import PhoneNumberField
 import phonenumbers
@@ -99,3 +101,12 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+
+
+class VerifyToken(models.Model):
+    # secrets.token_hex()
+    token = models.CharField(unique=True, max_length=20)
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+
+    def __str__(self):
+        return self.token

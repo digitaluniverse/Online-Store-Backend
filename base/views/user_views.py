@@ -17,6 +17,9 @@ from oauth2_provider.models import get_access_token_model, get_application_model
 from oauth2_provider.signals import app_authorized
 from base import models
 from base import serializers
+from accounts.models import User, VerifyToken
+import secrets
+
 import json
 from twilio.rest import Client
 from django.conf import settings
@@ -27,6 +30,7 @@ from rest_framework.generics import GenericAPIView
 from oauthlib import common
 from django.utils import timezone
 from datetime import datetime, timedelta
+from base.twilio_verify.verify import phone_verifications, email_verifications, verification_checks
 
 
 Application = get_application_model()
@@ -35,39 +39,6 @@ RefreshToken = get_refresh_token_model()
 
 
 authy_api = AuthyApiClient(settings.AUTHY_API_KEY)
-
-
-client = Client(settings.SOCIAL_AUTH_TWILIO_KEY,
-                settings.SOCIAL_AUTH_TWILIO_SECRET)
-
-# channel_configuration = {substitutions:{ email: }}
-
-
-def verifications(user_destination, via):
-
-
-
-
-
-    return client.verify \
-        .services(settings.TWILIO_VERIFICATION_SID) \
-        .verifications \
-        .create(
-            to=user_destination,
-            channel=via,
-            channel_configuration={
-                'substitutions': {
-                    'email': user_destination
-                }
-            }
-                )
-
-
-def verification_checks(user_destination, token):
-    return client.verify \
-        .services(settings.TWILIO_VERIFICATION_SID) \
-        .verification_checks \
-        .create(to=user_destination, code=token)
 
 
 @api_view(['Get'])
@@ -90,15 +61,14 @@ def getUsers(request):
 @permission_classes([IsAuthenticated])
 def updateUserProfile(request):
     user = request.user
-    serializer = serializers.CustomUserSerializer(user, many=False)
+    # serializer = serializers.CustomUserSerializer(user, many=False)
     data = request.data
-    user.first_name = data['name']
-    user.username = data['email']
-    user.email = data['email']
-    user.authy_phone = data['authy_phone']
 
-    user.save()
-
+    # user.first_name = data['name']
+    # user.username = data['email']
+    # user.email = data['email']
+    # user.authy_phone = data['authy_phone']
+    # user.save()
     return Response(serializer.data)
 
 
@@ -109,13 +79,26 @@ class updateUserProfileView(TokenView):
     def put(self, request, *args, **kwargs):
         # Use the rest framework `.data` to fake the post body of the django request.
         user = request.user
-
-        serializer = serializers.CustomUserSerializer(user, many=False)
-
         data = request.data
+        serializer = serializers.UpdateUserSerializer(user, many=False)
+        email = data['email']
+        if user.email != email:
+            try:
+                if User.objects.get(email=email):
+                    print("Email Already Registered")
+                    return Response(data={"detail": "Email Already Registered"}, status=statuscode.HTTP_400_BAD_REQUEST)
+            except Exception as error:
+                user.email = data['email']
+                user.email_verified = False
+                pass
+            
+            
+        serializer.validate_email(data['email'])
+        if user.authy_phone != data['authy_phone']:
+            user.authy_id = ''
+        # user.email = data['email']
         user.first_name = data['name']
         user.username = data['email']
-        user.email = data['email']
         user.authy_phone = data['authy_phone']
 
         user.save()
@@ -268,13 +251,13 @@ class updateUserNumber(TokenView):
         number = data['number']
 
         if (not user.phone_verified and user.number != number):
-            verifications(number, 'sms')
+            phone_verifications(number)
             user.number = number
             user.save()
             response = Response(
                 data={str("Sending Verification code")}, status=statuscode.HTTP_200_OK)
         elif not user.phone_verified:
-            verifications(number, 'sms')
+            phone_verifications(number)
             response = Response(
                 data={str("Sending Verification code")}, status=statuscode.HTTP_200_OK)
         else:
@@ -315,8 +298,23 @@ class verifyUserEmail(TokenView):
     def put(self, request):
         data = request.data
         email = data['email']
-
-        verifications(email, 'email')
+        try:
+            user = models.User.objects.get(email=email)
+            obj, created = VerifyToken.objects.get_or_create(user=user)
+            obj.token = secrets.token_urlsafe(20)
+            obj.save()
+            print(obj)
+            id = obj.token
+        except Exception as error:
+            print(error)
+            pass
+        channel_configuration_data = {
+            "substitutions": {
+                "id": id, "title": "Email Confirmation", "message": "Confirm Your Email", "callback_url": "http://localhost:3000/confirm-email"
+            }
+        }
+        channel_configuration = json.dumps(channel_configuration_data)
+        email_verifications(email, channel_configuration)
 
         return Response(
             data={str("Sending Verification code")}, status=statuscode.HTTP_200_OK)
@@ -325,8 +323,18 @@ class verifyUserEmail(TokenView):
 class confirmUserEmail(TokenView):
     def post(self, request):
         data = request.data
-        email = data['email']
+        id = data['id']
         code = data['code']
+
+        try: 
+            token = VerifyToken.objects.get(token=id)
+            print(token)
+            email = str(token.user)
+
+        except Exception as error:
+            print(error)
+            pass
+
         try:
             valid = verification_checks(email, code).valid
             print(valid)
@@ -348,6 +356,72 @@ class confirmUserEmail(TokenView):
                 data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
 
 
+class passwordResetEmail(TokenView):
+    def put(self, request):
+        data = request.data
+        email = data['email']
+        try:
+            user = models.User.objects.get(email=email)
+            obj, created = VerifyToken.objects.get_or_create(user=user)
+            obj.token = secrets.token_urlsafe(20)
+            obj.save()
+            print(obj)
+            id = obj.token
+        except Exception as error:
+            print(error)
+            pass
+        # secrets.token_urlsafe(20)
+        channel_configuration_data = {
+            "substitutions": {
+                "id": id, "title": "Password Reset", "message": "Reset your Password", "callback_url": "http://localhost:3000/password-reset-email"
+            }
+        }
+        channel_configuration = json.dumps(channel_configuration_data)
+        email_verifications(email, channel_configuration)
+
+        return Response(
+            data={str("Sending Verification code")}, status=statuscode.HTTP_200_OK)
+
+
+class confirmResetPasswordEmail(TokenView):
+    def post(self, request):
+        data = request.data
+        id = data['id']
+        code = data['code']
+
+        try: 
+            token = VerifyToken.objects.get(token=id)
+            print(token)
+            email = str(token.user)
+
+        except Exception as error:
+            print(error)
+            pass
+
+        try:
+            valid = verification_checks(email, code).valid
+            print(valid)
+            if not valid:
+                # verifications(email, 'email')
+                return Response(
+                    data={"error": "Code Not Valid"}, status=statuscode.HTTP_400_BAD_REQUEST)
+            try:
+                user = models.User.objects.get(email=email)
+                print("Password Reset Code Valid")
+                token.delete()
+                return Response(
+                    data={"verified": email}, status=statuscode.HTTP_200_OK)
+            except Exception as error:
+                token.delete()
+                return Response(
+                    data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
+        
+        except Exception as error:
+            return Response(
+                data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
+        
+
+
 class resetPassword(TokenView):
     @permission_classes([IsAuthenticated])
     def put(self, request):
@@ -358,7 +432,7 @@ class resetPassword(TokenView):
         if (user.phone_verified):
             number = str(user.number)
             print(number)
-            verifications(number, 'sms')
+            phone_verifications(number)
             response = Response(data={"message": str(
                 "Phone Number is already Verified")}, status=statuscode.HTTP_200_OK)
         else:

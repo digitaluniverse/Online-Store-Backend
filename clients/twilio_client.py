@@ -1,7 +1,7 @@
 from twilio.rest import Client
 from django.conf import settings
 
-client = Client(settings.SOCIAL_AUTH_TWILIO_KEY, settings.SOCIAL_AUTH_TWILIO_SECRET)
+client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
 
 def verifications(phone_number, via):
         return client.verify \
