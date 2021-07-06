@@ -126,7 +126,7 @@ class userLoginView(TokenView):
                     sender=self, request=request,
                     token=token)
                 if not token.user.email_verified:
-                    return Response({"error": "Email must be Verified before Login"},
+                    return Response({"detail": "verification"},
                                     status=statuscode.HTTP_400_BAD_REQUEST)
                 user_data = serializers.UserSerializer(token.user).data
                 body.update(user_data)
@@ -300,11 +300,14 @@ class verifyUserEmail(TokenView):
         email = data['email']
         try:
             user = models.User.objects.get(email=email)
-            obj, created = VerifyToken.objects.get_or_create(user=user)
-            obj.token = secrets.token_urlsafe(20)
-            obj.save()
-            print(obj)
-            id = obj.token
+            if not user.email_verified:
+                obj, created = VerifyToken.objects.get_or_create(user=user)
+                obj.token = secrets.token_urlsafe(20)
+                obj.save()
+                print(obj)
+                id = obj.token
+            else:
+                return Response(data={"detail": "Email already verified"}, status=statuscode.HTTP_400_BAD_REQUEST)
         except Exception as error:
             print(error)
             pass
