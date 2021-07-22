@@ -142,10 +142,16 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ORIGIN_WHITELIST = [
     'http://localhost:8000',
     'http://proshopapi.ngrok.io',
+    'http://proshop.ngrok.io',
+    'http://secureshop.ngrok.io',
+    
 ]
 CORS_ORIGIN_REGEX_WHITELIST = [
     'http://localhost:8000',
     'http://proshopapi.ngrok.io',
+    'http://proshop.ngrok.io',
+    'http://secureshop.ngrok.io',
+
 
 ]
 
@@ -185,5 +191,6 @@ AUTH_USER_MODEL = 'accounts.User'
 TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN')
 TWILIO_VERIFICATION_SID=config('TWILIO_VERIFICATION_SID')
+TWILIO_FROM_NUMBER=config('TWILIO_FROM_NUMBER')
 AUTHY_API_KEY=config('AUTHY_API_KEY')
 BACKEND_URL=config('BACKEND_URL')

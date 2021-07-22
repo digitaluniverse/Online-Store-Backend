@@ -1,4 +1,7 @@
-from os import access, read
+from enum import unique
+from os import access, error, read
+from django.core import validators
+from django.core.validators import validate_email
 from rest_framework import serializers
 # from django.contrib.auth.models import User
 from rest_framework.fields import EmailField, ReadOnlyField
@@ -10,6 +13,10 @@ from oauth2_provider.models import get_access_token_model, get_application_model
 from authy.api import AuthyApiClient
 from django.conf import settings
 from twilio.rest import Client
+
+from rest_framework.validators import UniqueValidator
+from django.contrib.auth.password_validation import validate_password
+
 
 import phonenumbers
 from phonenumber_field.serializerfields import PhoneNumberField
@@ -33,19 +40,17 @@ client = Client(settings.TWILIO_ACCOUNT_SID,
 
 
 def verifications(user_destination, via):
-        return client.verify \
-                    .services(settings.TWILIO_VERIFICATION_SID) \
-                    .verifications \
-                    .create(to=user_destination, channel=via)
+    return client.verify \
+        .services(settings.TWILIO_VERIFICATION_SID) \
+        .verifications \
+        .create(to=user_destination, channel=via)
 
 
 def verification_checks(user_destination, token):
-        return client.verify \
-                    .services(settings.TWILIO_VERIFICATION_SID) \
-                    .verification_checks \
-                    .create(to=user_destination, code=token)
-
-
+    return client.verify \
+        .services(settings.TWILIO_VERIFICATION_SID) \
+        .verification_checks \
+        .create(to=user_destination, code=token)
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -56,7 +61,7 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = models.User
         fields = ['id', '_id', 'username', 'email', 'name', 'number',
-                  'phone_verified', 'email_verified', 'authy_phone', 'authy_id', 'isAdmin']
+                  'phone_verified', 'email_verified', 'newsletter', 'text_alerts', 'authy_phone', 'authy_id', 'isAdmin']
 
     def get__id(self, obj):
         return obj.id
@@ -71,49 +76,47 @@ class UserSerializer(serializers.ModelSerializer):
         return name
 
 
-class RegisterSerializerWithToken(serializers.ModelSerializer):
-    grant_type = serializers.CharField()
-    client_id = serializers.CharField()
-    client_secret = serializers.CharField()
-    name = serializers.CharField()
-    username = serializers.SerializerMethodField(read_only=True)
+class RegistrationSerializer(serializers.Serializer):
+    name = serializers.CharField(write_only=True)
+    email = serializers.EmailField(
+        )
+    password = serializers.CharField(
+        write_only=True,
+        validators=[validate_password]
+        )
+        
+    def validate(self,data):
 
-    class Meta:
-        model = models.User
-        fields = ('grant_type', 'client_id',
-                  'client_secret', 'name', 'email', 'password', 'username')
-        extra_kwargs = {
-            'grant_type': {'read_only': True},
-            'client_id': {'read_only': True},
-            'client_secret': {'read_only': True},
-            'name': {'read_only': True}
-        }
-
-    def validate(self, data):
-        queryset = models.User.objects.all()
-        try:
-            email = data.get('email')
-            filtered = queryset.get(username=email)
-            raise serializers.ValidationError(
-                {"Error": "Email Already Exists"})
-        except models.User.DoesNotExist:
-            pass
-        if not data.get('name'):
-            raise serializers.ValidationError(
-                {"Error": "Name can not be empty"})
-        if not data.get('email'):
-            raise serializers.ValidationError(
-                {"Error": "Email can not be empty"})
-        if not data.get('password'):
-            raise serializers.ValidationError(
-                {"Error": "Password can not be empty"})
-
+            first_name = data.get('name')
+            username = data['email']
+            email = data['email']
+            password = data['password']
+            
+            email_query = models.User.objects.filter(email__iexact=email)
+            if email_query.exists():
+                verified = email_query.values_list('email_verified',flat=True).first()
+                print(verified)
+                if verified:
+                    raise serializers.ValidationError({"type": "exists","detail": "That Email address is already associated with a secureshop account"})
+                else:
+                    raise serializers.ValidationError({"type": "verify","detail": "That Email address is already associated with a secureshop account but isnt verified"})
                 
-        return data
+            try:
+                validate_password(password)
 
-    def get_username(self, obj):
-        username = obj['email']
-        return username
+            except Exception as error:
+                print(error)
+                raise serializers.ValidationError({"type": "password","detail": str(error)})
+
+
+            new_data = {
+                'first_name': first_name,
+                'username': username,
+                'email': email,
+                'password': password,
+            }
+            return new_data
+
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -151,7 +154,6 @@ class TokenSerializer(serializers.Serializer):
         return data
 
 
-
 class CustomUserSerializer(serializers.ModelSerializer):
     name = serializers.SerializerMethodField(read_only=True)
     _id = serializers.SerializerMethodField(read_only=True)
@@ -162,8 +164,7 @@ class CustomUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = models.User
         fields = ['id', '_id', 'username', 'email', 'name', 'number',
-                  'phone_verified', 'email_verified', 'authy_phone', 'authy_id', 'isAdmin','access_token','refresh_token']
-
+                  'phone_verified', 'email_verified', 'text_alerts', 'newsletter', 'authy_phone', 'authy_id', 'isAdmin', 'access_token', 'refresh_token']
 
     def get__id(self, obj):
         return obj.id
@@ -177,7 +178,7 @@ class CustomUserSerializer(serializers.ModelSerializer):
             name = obj.email
         return name
 
-    def accessToken(self,obj):
+    def accessToken(self, obj):
         application = Application.objects.get()
         expires = timezone.now() + timedelta(seconds=oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
         access_token = AccessToken(
@@ -190,12 +191,12 @@ class CustomUserSerializer(serializers.ModelSerializer):
         access_token.save()
         return access_token
 
-    def get_access_token(self,obj):
+    def get_access_token(self, obj):
         access_token = self.accessToken(obj)
         access_token = str(access_token)
         return access_token
 
-    def get_refresh_token(self,obj):
+    def get_refresh_token(self, obj):
         access_token = self.accessToken(obj)
         application = Application.objects.get(name='auth')
         refresh_token = RefreshToken(
@@ -209,30 +210,39 @@ class CustomUserSerializer(serializers.ModelSerializer):
         return refresh_token
 
 
+
 class UpdateUserSerializer(CustomUserSerializer):
     # id = ReadOnlyField()
     # name = CharField()
     email = EmailField()
     # authy_phone = PhoneNumberField(required=False)
 
-    def validate_email(self,value):
+    def validate_email(self, value):
         print("VALIDATE EMAIL")
-        
+
         print(value)
         return value
+
 
 class PhoneSerializer(serializers.Serializer):  # noqa
     authy_phone = PhoneNumberField(required=True)
 
     def validate(self, data):
-        phone = phonenumbers.parse(str(data.get("authy_phone")), None)
-        authy_phone = authy_api.phones.verification_start(
-            phone.national_number, phone.country_code
-        )
-        if authy_phone.ok():
-            return data
-        else:
-            raise ValidationError(authy_phone.errors())
+        try:
+            phone = phonenumbers.parse(str(data.get("authy_phone")), None)
+            authy_phone = authy_api.phones.verification_start(
+                phone.national_number, phone.country_code
+            )
+            if authy_phone.ok():
+                return data
+            else:
+                #raise ValidationError(authy_phone.errors())
+                raise ValidationError({"detail": authy_phone.errors()})
+
+        except Exception as error:
+            print(error)
+            raise ValidationError({"detail": error})
+
 
 
 class PhoneTokenSerializer(serializers.Serializer):  # noqa
@@ -252,4 +262,44 @@ class PhoneTokenSerializer(serializers.Serializer):  # noqa
 
 
 # class AuthyPhoneLoginSerializer(serializers.Serizlizer):
-    
+
+class ShippingAddressSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = models.ShippingAddress
+        fields = '__all__'
+
+
+class OrderItemSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = models.OrderItem
+        fields = '__all__'
+
+
+class OrderSerializer(serializers.ModelSerializer):
+    orderItems = serializers.SerializerMethodField(read_only=True)
+    shippingAddress = serializers.SerializerMethodField(read_only=True)
+    user = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = models.Order
+        fields = '__all__'
+
+    def get_orderItems(self, obj):
+        items = obj.orderitem_set.all()
+        serializer = OrderItemSerializer(items, many=True)
+        return serializer.data
+
+    def get_shippingAddress(self, obj):
+        try:
+            address = ShippingAddressSerializer(
+                obj.shippingaddress, many=False).data
+        except:
+            address = False
+        return address
+
+    def get_user(self, obj):
+        user = obj.user
+        serializer = UserSerializer(user, many=False)
+        return serializer.data

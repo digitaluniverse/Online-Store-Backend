@@ -26,7 +26,7 @@ from django.conf import settings
 from authy.api import AuthyApiClient
 import phonenumbers
 from phonenumber_field.serializerfields import PhoneNumberField
-from rest_framework.generics import GenericAPIView
+from rest_framework.generics import CreateAPIView, GenericAPIView
 from oauthlib import common
 from django.utils import timezone
 from datetime import datetime, timedelta
@@ -91,8 +91,7 @@ class updateUserProfileView(TokenView):
                 user.email = data['email']
                 user.email_verified = False
                 pass
-            
-            
+
         serializer.validate_email(data['email'])
         if user.authy_phone != data['authy_phone']:
             user.authy_id = ''
@@ -100,7 +99,10 @@ class updateUserProfileView(TokenView):
         user.first_name = data['name']
         user.username = data['email']
         user.authy_phone = data['authy_phone']
-
+        if user.email_verified:
+            user.newsletter = data['newsletter']
+        if user.phone_verified:
+            user.text_alerts = data['text_alerts']
         user.save()
 
         return Response(serializer.data)
@@ -177,69 +179,49 @@ class newRegisterView(APIView):
             return Response(data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
 
 
-class userRegisterView(TokenView):
-    id = None
+class userRegisterView(APIView):
 
-    def delete_user(self):
-        try:
-            user = models.User.objects.get(id=self.id)
-            user.delete()
-        except Exception as error:
-            print("Error: ", error)
+    def create_user(self, validated_data):
+        user = models.User.objects.create(
+            first_name=validated_data['first_name'],
+            username=validated_data['email'],
+            email=validated_data['email'],
+            password=make_password(validated_data['password'])
+        )
+        return user
 
-    def create_user(self, data):
-        serializer = serializers.RegisterSerializerWithToken(data=data)
-        try:
-            serializer.is_valid(raise_exception=True)
-            user = models.User.objects.create(
-                first_name=data['name'],
-                username=data['email'],
-                email=data['email'],
-                password=make_password(data['password'])
-            )
-            self.id = user.id
-            return serializer.data
-        except ValidationError:
-            return Response(serializer.errors, status=statuscode.HTTP_400_BAD_REQUEST)
+    def send_verification_email(self, user):
+        obj, created = VerifyToken.objects.get_or_create(user=user)
+        obj.token = secrets.token_urlsafe(20)
+        obj.save()
+        print(obj)
+        id = obj.token
+        channel_configuration_data = {
+            "substitutions": {
+                "id": id, "title": "Email Verification", "message": "Confirm Your Email", "callback_url": "http://secureshop.ngrok.io/confirm-email"
+            }
+        }
+        channel_configuration = json.dumps(channel_configuration_data)
+        email_verifications(user.email, channel_configuration)
 
-    def post(self, request, *args, **kwargs):
-        # Use the rest framework `.data` to fake the post body of the django request.
-        mutable_data = request.data.copy()
-        request._request.POST = request._request.POST.copy()
-        data = mutable_data
-        try:
-            serialized_data = self.create_user(data)
-            for key, value in serialized_data.items():
-                request._request.POST[key] = value
-            url, headers, body, status = self.create_token_response(
-                request._request)
-            print("status: ", body)
-            if status == 401:
-                self.delete_user()
-                body = json.loads(body)
 
-                return Response(data={"error": str(body)}, status=status)
-
-            if status == 200:
-                body = json.loads(body)
-                access_token = body.get("access_token")
-                if access_token is not None:
-                    token = get_access_token_model().objects.get(
-                        token=access_token)
-                    app_authorized.send(
-                        sender=self, request=request,
-                        token=token)
-                    user_data = serializers.UserSerializer(token.user).data
-                    # add user data to token body
-                    body.update(user_data)
-                    body = json.dumps(body)
-            response = Response(data=json.loads(body), status=status)
-
-            for k, v in headers.items():
-                response[k] = v
-            return response
-        except Exception as error:
-            return Response(data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
+    def post(self, request):
+        serializer = serializers.RegistrationSerializer(data=request.data)
+        serializer.validate(data=request.data)
+        if serializer.is_valid():
+            validated_data = serializer.validated_data
+            user = self.create_user(validated_data)
+            email = validated_data['email']
+            try:
+                self.send_verification_email(user)
+                return Response(data={"detail": "User Registered. Registration Email Sent", "email": email}, status=statuscode.HTTP_201_CREATED)
+            except Exception as error:
+                return Response(data={"error": error}, status=statuscode.HTTP_400_BAD_REQUEST)
+        else:
+            for key,value in serializer.errors.items():
+                print(value)
+            print(serializer.errors)
+            return Response(data={json.dumps(serializer.errors)}, status=statuscode.HTTP_400_BAD_REQUEST)
 
 
 class updateUserNumber(TokenView):
@@ -295,10 +277,15 @@ class verifyUserNumber(TokenView):
 
 
 class verifyUserEmail(TokenView):
+
     def put(self, request):
+        id = 'nope'
         data = request.data
         email = data['email']
         try:
+            if not (models.User.objects.filter(email=email)).exists():
+                return Response(data={"detail": f'{email} does not exist',"type": "email_exists"}, status=statuscode.HTTP_400_BAD_REQUEST)
+
             user = models.User.objects.get(email=email)
             if not user.email_verified:
                 obj, created = VerifyToken.objects.get_or_create(user=user)
@@ -309,11 +296,10 @@ class verifyUserEmail(TokenView):
             else:
                 return Response(data={"detail": "Email already verified"}, status=statuscode.HTTP_400_BAD_REQUEST)
         except Exception as error:
-            print(error)
-            pass
+            return Response(data={"detail": error}, status=statuscode.HTTP_400_BAD_REQUEST)
         channel_configuration_data = {
             "substitutions": {
-                "id": id, "title": "Email Confirmation", "message": "Confirm Your Email", "callback_url": "http://localhost:3000/confirm-email"
+                "id": id, "title": "Email Confirmation", "message": "Confirm Your Email", "callback_url": "http://secureshop.ngrok.io/confirm-email"
             }
         }
         channel_configuration = json.dumps(channel_configuration_data)
@@ -329,7 +315,7 @@ class confirmUserEmail(TokenView):
         id = data['id']
         code = data['code']
 
-        try: 
+        try:
             token = VerifyToken.objects.get(token=id)
             print(token)
             email = str(token.user)
@@ -376,7 +362,7 @@ class passwordResetEmail(TokenView):
         # secrets.token_urlsafe(20)
         channel_configuration_data = {
             "substitutions": {
-                "id": id, "title": "Password Reset", "message": "Reset your Password", "callback_url": "http://localhost:3000/password-reset-email"
+                "id": id, "title": "Password Reset", "message": "Reset your Password", "callback_url": "http://secureshop.ngrok.io/password-reset-email"
             }
         }
         channel_configuration = json.dumps(channel_configuration_data)
@@ -392,7 +378,7 @@ class confirmResetPasswordEmail(TokenView):
         id = data['id']
         code = data['code']
 
-        try: 
+        try:
             token = VerifyToken.objects.get(token=id)
             print(token)
             email = str(token.user)
@@ -410,38 +396,47 @@ class confirmResetPasswordEmail(TokenView):
                     data={"error": "Code Not Valid"}, status=statuscode.HTTP_400_BAD_REQUEST)
             try:
                 user = models.User.objects.get(email=email)
+                application = Application.objects.get(name='auth')
+                expires = timezone.now() + timedelta(seconds=oauth2_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
+                access_token = AccessToken(
+                    user=user,
+                    scope='',
+                    expires=expires,
+                    token=common.generate_token(),
+                    application=application
+                )
+                access_token.save()
                 print("Password Reset Code Valid")
                 token.delete()
                 return Response(
-                    data={"verified": email}, status=statuscode.HTTP_200_OK)
+                    data=str(access_token), status=statuscode.HTTP_200_OK)
             except Exception as error:
                 token.delete()
                 return Response(
                     data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
-        
+
         except Exception as error:
             return Response(
                 data={"error": str(error)}, status=statuscode.HTTP_400_BAD_REQUEST)
-        
 
 
 class resetPassword(TokenView):
     @permission_classes([IsAuthenticated])
     def put(self, request):
         user = request.user
-        data = request.data
-        password = make_password(data['password'])
+        try:
+            data = request.data
+            password = make_password(data['password'])
+            user.password = password
+            user.save()
+            serializer = serializers.CustomUserSerializer(user)
+            return Response(serializer.data, status=statuscode.HTTP_200_OK)
 
-        if (user.phone_verified):
-            number = str(user.number)
-            print(number)
-            phone_verifications(number)
-            response = Response(data={"message": str(
-                "Phone Number is already Verified")}, status=statuscode.HTTP_200_OK)
-        else:
-            response = Response(data={"error": str(
-                "Phone Number is not Verified")}, status=statuscode.HTTP_400_BAD_REQUEST)
-        return response
+
+        except Exception as error:
+            return Response(data={"error": error}, status=statuscode.HTTP_400_BAD_REQUEST)
+
+
 
 
 class CustomTokenObtainPairView(TokenView):
